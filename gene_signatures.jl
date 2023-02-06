@@ -139,6 +139,75 @@ targets = label_binarizer(tissues)
 lengths = [1,2,3,5,10,15,20,25,30,40,50,75,100,200,500]
 repn = 10
 length_accs = Array{Float64, 2}(undef, (length(lengths) * repn, 2))
+
+#### TCGA
+basepath = "/home/muninn/scratch/golem-rpool-backup/golem-rpool/GDC"
+
+function fetch_paths(path)
+    dirs = readdir(path)
+    paths = []
+    tissues = Array{String,1}()
+    samples = []
+    for elem in dirs
+        try 
+            subpaths = readdir("$path/$elem")
+            for subelem in subpaths
+                if isfile("$path/$elem/$subelem/abundance.tsv")
+                    push!(paths, "$path/$elem/$subelem/abundance.tsv")                
+                    push!(tissues, elem)
+                    push!(samples, subelem[1:8])
+                end 
+            end 
+        catch err
+        end 
+    end 
+    return paths, tissues, samples
+end 
+
+TCGA_paths, TCGA_tissues, TCGA_samples = fetch_paths(basepath)
+template = CSV.read(TCGA_paths[1], DataFrame)
+cols = template.target_id
+rows = TCGA_samples
+TCGA_TPM = Array{Float32, 2}(undef, (length(TCGA_paths), ngenes - 1))
+using ProgressBars
+for i::Int in ProgressBar(1:length(TCGA_samples)) 
+    TCGA_TPM[i,:] = CSV.read(TCGA_paths[i], DataFrame).tpm
+end 
+# save in Data structure
+TCGA_data = Data(TCGA_TPM, cols, rows)
+f = h5open("TCGA.out", "w")
+f["data"] = TCGA_data.data
+f["rows"] = TCGA_data.rows
+f["cols"] = TCGA_data.cols
+f["tissues"] = Array(TCGA_tissues)
+close(f)
+# f["cds_data"] = cds_data
+
+inf = h5open("TCGA.out", "r")
+data = log10.(inf["data"][:,:] .+ 1) 
+rows = inf["rows"][:]
+cols = inf["cols"][:]
+tissues = inf["tissues"][:]
+close(inf)
+
+ensmbl[findall(ensmbl[:,"gene_biotype"] .== "protein_coding"),:]
+ENST = Array{String, 1}() 
+raw = split.(cols,".")
+[push!(ENST, raw[i][1]) for i in 1:size(raw)[1]]
+ENST
+TCGA_data = Data(data, ENST, rows)
+gencode
+variances = vec(var(data, dims = 1))
+keep = variances .> sort(variances)[Int(round(length(variances) * 0.95))]
+TCGA_TPM_hv = Data(data[:,keep], cols[keep], rows)
+data = TCGA_TPM_hv.data
+cols = TCGA_TPM_hv.cols
+rows = TCGA_TPM_hv.rows
+# variances = vec(var(GTEX_tpm.data, dims = 1))
+# keep = variances .> median(variances)
+# GTEX_tpm_hv = Data(GTEX_tpm.data[:, keep], GTEX_tpm.cols[keep], GTEX_tpm.rows) 
+
+
 for (row, l) in enumerate(lengths)     
     for repl in 1:repn
         #loss(X, Y, model) = Flux.loss.MSE(model(X), Y)
@@ -162,4 +231,4 @@ for (row, l) in enumerate(lengths)
 end 
 df = DataFrame(Dict([("lengths", length_accs[:,1]), ("tst_acc", length_accs[:,2])]))
 outpath, outdir = set_dirs()
-CSV.write("$outdir/tst_accs.csv", df)
+CSV.write("$outdir/TCGA_tst_accs.csv", df)
